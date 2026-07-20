@@ -1,0 +1,47 @@
+# CMake build output
+/build/
+/cmake-build-*/
+/out/
+/Debug/
+/Release/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+compile_commands.json
+build.ninja
+.ninja_deps
+.ninja_log
+
+# Compiler output
+*.o
+*.obj
+*.d
+*.su
+*.elf
+*.axf
+*.hex
+*.bin
+*.map
+*.lst
+
+# IDE-local settings
+.idea/
+.vscode/
+CMakeUserPresets.json
+
+# Unused vendor IDE projects
+/MDK-ARM/
+/EWARM/
+
+# Third-party tutorial code used only as reference
+/Reference/legacy/
+
+# Temporary files
+*.bak
+*.tmp
+*.log
+*.orig
+*.rej
+*~
+Thumbs.db
+Desktop.ini
