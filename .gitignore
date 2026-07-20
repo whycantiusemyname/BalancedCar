@@ -37,6 +37,7 @@ CMakeUserPresets.json
 /Reference/legacy/
 
 # Temporary files
+/tmp/
 *.bak
 *.tmp
 *.log
