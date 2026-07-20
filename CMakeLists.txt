@@ -32,7 +32,17 @@ message("Build type: " ${CMAKE_BUILD_TYPE})
 enable_language(C ASM)
 
 # Create an executable object type
-add_executable(${CMAKE_PROJECT_NAME})
+add_executable(${CMAKE_PROJECT_NAME}
+        BSP/Inc/Key.h
+        BSP/Src/Key.c
+        BSP/Inc/BlueToothSerial.h
+        BSP/Src/BlueToothSerial.c
+        BSP/Inc/Motor.h
+        BSP/Src/Motor.c
+        BSP/Inc/MPU6050.h
+        BSP/Src/mpu6050.c
+        BSP/Inc/Encoder.h
+        BSP/Src/Encoder.c)
 
 # Add STM32CubeMX generated sources
 add_subdirectory(cmake/stm32cubemx)
@@ -45,11 +55,17 @@ target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
 # Add sources to executable
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user sources here
+    BSP/Src/LED.c
+    BSP/Src/font.c
+    BSP/Src/oled.c
+    Tests/BluetoothDiagnostic.c
 )
 
 # Add include paths
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user defined include paths
+    ${CMAKE_CURRENT_SOURCE_DIR}/BSP/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/Tests
 )
 
 # Add project symbols (macros)
