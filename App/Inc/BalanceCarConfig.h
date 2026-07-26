@@ -100,9 +100,10 @@
 /*
  * 目标偏航角速度前馈(输出/dps)。持续旋转实测跟踪比卡0.72且积分闭不
  * 掉,纯反馈提增益又会放大GZ噪声;前馈直接按目标给差分量,无稳定性
- * 代价。0=关闭,先在线扫出实车值再固化。
+ * 代价。7-26在线扫参0/0.4/0.8/1.0/1.2线性响应,1.0时稳态比0.95、
+ * 瞬态峰1.07,取1.0。
  */
-#define BALANCE_CAR_DEFAULT_TURN_FEEDFORWARD         0.0F
+#define BALANCE_CAR_DEFAULT_TURN_FEEDFORWARD         1.0F
 #define BALANCE_CAR_DEFAULT_TURN_KI                  0.30F
 #define BALANCE_CAR_DEFAULT_TURN_KD                  0.0F
 
