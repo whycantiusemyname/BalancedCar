@@ -36,6 +36,12 @@ CMakeUserPresets.json
 # Third-party tutorial code used only as reference
 /Reference/legacy/
 
+# Telemetry experiment logs (BalanceTuner / GamepadBridge sessions)
+/Logs/
+/Tools/Logs/
+/Tools/gamepad-telemetry.csv
+__pycache__/
+
 # Temporary files
 /tmp/
 *.bak

@@ -16,7 +16,7 @@
 #define MPU6050_REG_PWR_MGMT_2      0x6CU
 
 #define MPU6050_READY_TRIALS        3U
-#define MPU6050_I2C_TIMEOUT_MS      100U
+#define MPU6050_I2C_TIMEOUT_MS        5U
 #define MPU6050_RESET_DELAY_MS      100U
 #define MPU6050_STARTUP_DELAY_MS    100U
 
@@ -84,7 +84,8 @@ HAL_StatusTypeDef MPU6050_Init(BSP_MPU6050 *imu,
     if (status != HAL_OK) return status;
     status = MPU6050_WriteRegister(imu, MPU6050_REG_CONFIG, 0x03U);
     if (status != HAL_OK) return status;
-    status = MPU6050_WriteRegister(imu, MPU6050_REG_SMPLRT_DIV, 0x09U);
+    /* DLPF开启时内部输出为1kHz；/5得到与5ms控制环一致的200Hz。 */
+    status = MPU6050_WriteRegister(imu, MPU6050_REG_SMPLRT_DIV, 0x04U);
     if (status != HAL_OK) return status;
     status = MPU6050_WriteRegister(imu, MPU6050_REG_GYRO_CONFIG, 0x00U);
     if (status != HAL_OK) return status;

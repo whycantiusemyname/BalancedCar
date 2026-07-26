@@ -1,11 +1,15 @@
 #include "BluetoothDiagnostic.h"
 
 #include "BlueToothSerial.h"
+#include "Encoder.h"
 #include "Key.h"
 #include "LED.h"
 #include "MPU6050.h"
+#include "Motor.h"
 #include "i2c.h"
+#include "main.h"
 #include "oled.h"
+#include "tim.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -19,6 +23,12 @@
 #define COMMAND_BUFFER_SIZE     64U
 #define MPU_SAMPLE_PERIOD_MS     20U
 #define OLED_REFRESH_PERIOD_MS  250U
+#define ENCODER_SAMPLE_PERIOD_MS 20U
+#define MOTOR_TEST_MAGIC          0x4D545354UL
+#define MOTOR_TEST_COMMAND        250
+#define MOTOR_TEST_MAX_TIME_MS    250U
+#define MOTOR_TEST_MAX_COUNTS     160
+#define MOTOR_TEST_SETTLE_MS      250U
 #define MPU_AVERAGE_SETTLE_MS  2000U
 #define MPU_AVERAGE_SAMPLE_MS    10U
 #define MPU_AVERAGE_SAMPLE_COUNT 1000U
@@ -52,12 +62,17 @@ static MpuAverage_State mpu_average_state;
 static BSP_Key diagnostic_keys[4];
 static BSP_MPU6050 diagnostic_mpu;
 static BSP_MPU6050_RawData diagnostic_mpu_raw;
+static BSP_Encoder diagnostic_encoder_1;
+static BSP_Encoder diagnostic_encoder_2;
+static BSP_Motor diagnostic_motor_1;
+static BSP_Motor diagnostic_motor_2;
 
 static uint32_t last_raw_banner_ms;
 static uint32_t last_led_toggle_ms;
 static uint32_t last_command_byte_ms;
 static uint32_t last_mpu_sample_ms;
 static uint32_t last_oled_refresh_ms;
+static uint32_t last_encoder_sample_ms;
 static bool oled_ready;
 static bool mpu_ready;
 static uint8_t tested_key_mask;
@@ -72,6 +87,25 @@ static int16_t mpu_accel_z;
 static int16_t mpu_gyro_x;
 static int16_t mpu_gyro_y;
 static int16_t mpu_gyro_z;
+static volatile HAL_StatusTypeDef diagnostic_encoder_1_init_status;
+static volatile HAL_StatusTypeDef diagnostic_encoder_2_init_status;
+static volatile int16_t diagnostic_encoder_1_delta;
+static volatile int16_t diagnostic_encoder_2_delta;
+static volatile int32_t diagnostic_encoder_1_total;
+static volatile int32_t diagnostic_encoder_2_total;
+static volatile uint16_t diagnostic_encoder_1_raw;
+static volatile uint16_t diagnostic_encoder_2_raw;
+static volatile uint8_t diagnostic_encoder_1_gpio_state;
+static volatile uint8_t diagnostic_encoder_2_gpio_state;
+static volatile uint32_t diagnostic_encoder_1_gpio_transitions;
+static volatile uint32_t diagnostic_encoder_2_gpio_transitions;
+static uint8_t diagnostic_encoder_1_last_gpio_state;
+static uint8_t diagnostic_encoder_2_last_gpio_state;
+static volatile HAL_StatusTypeDef diagnostic_motor_1_init_status;
+static volatile HAL_StatusTypeDef diagnostic_motor_2_init_status;
+static volatile uint32_t diagnostic_motor_test_request;
+static volatile int16_t diagnostic_motor_test_results[4];
+static bool show_motor_test_result;
 
 static uint32_t mpu_average_started_ms;
 static uint32_t mpu_average_next_sample_ms;
@@ -101,6 +135,207 @@ static uint16_t command_length;
 static bool discard_command;
 
 static HAL_StatusTypeDef BluetoothDiagnostic_BspWrite(const char *text);
+
+static int16_t BluetoothDiagnostic_CounterDifference(uint16_t current,
+                                                     uint16_t start)
+{
+    return (int16_t)(uint16_t)(current - start);
+}
+
+static int16_t BluetoothDiagnostic_RunMotorPulse(BSP_Motor *motor,
+                                                 TIM_HandleTypeDef *encoder,
+                                                 int16_t command)
+{
+    const uint16_t start = (uint16_t)__HAL_TIM_GET_COUNTER(encoder);
+    const uint32_t started_ms = HAL_GetTick();
+
+    if (BSP_Motor_SetCommand(motor, command) != HAL_OK) {
+        return 0;
+    }
+
+    int16_t difference = 0;
+    do {
+        difference = BluetoothDiagnostic_CounterDifference(
+            (uint16_t)__HAL_TIM_GET_COUNTER(encoder),
+            start
+        );
+        int32_t magnitude = difference;
+        if (magnitude < 0) {
+            magnitude = -magnitude;
+        }
+        if (magnitude >= MOTOR_TEST_MAX_COUNTS) {
+            break;
+        }
+        HAL_Delay(1U);
+    } while ((uint32_t)(HAL_GetTick() - started_ms) < MOTOR_TEST_MAX_TIME_MS);
+
+    (void)BSP_Motor_Stop(motor);
+    HAL_Delay(MOTOR_TEST_SETTLE_MS);
+    return difference;
+}
+
+static bool BluetoothDiagnostic_MotorPairPassed(int16_t positive,
+                                                int16_t negative)
+{
+    return positive != 0
+        && negative != 0
+        && ((int32_t)positive * (int32_t)negative) < 0;
+}
+
+static void BluetoothDiagnostic_DrawMotorTestResult(void)
+{
+    char line[24];
+    const bool motor_1_passed = BluetoothDiagnostic_MotorPairPassed(
+        diagnostic_motor_test_results[0],
+        diagnostic_motor_test_results[1]
+    );
+    const bool motor_2_passed = BluetoothDiagnostic_MotorPairPassed(
+        diagnostic_motor_test_results[2],
+        diagnostic_motor_test_results[3]
+    );
+
+    OLED_NewFrame();
+    OLED_PrintASCIIString(1U, 0U, "MOTOR+ENCODER TEST", &afont8x6, OLED_COLOR_NORMAL);
+    (void)snprintf(line, sizeof(line), "M1 +%d  -%d",
+                   diagnostic_motor_test_results[0],
+                   diagnostic_motor_test_results[1]);
+    OLED_PrintASCIIString(1U, 16U, line, &afont8x6, OLED_COLOR_NORMAL);
+    (void)snprintf(line, sizeof(line), "M2 +%d  -%d",
+                   diagnostic_motor_test_results[2],
+                   diagnostic_motor_test_results[3]);
+    OLED_PrintASCIIString(1U, 30U, line, &afont8x6, OLED_COLOR_NORMAL);
+    (void)snprintf(line, sizeof(line), "RESULT %s/%s",
+                   motor_1_passed ? "PASS" : "FAIL",
+                   motor_2_passed ? "PASS" : "FAIL");
+    OLED_PrintASCIIString(1U, 46U, line, &afont16x8, OLED_COLOR_NORMAL);
+    OLED_ShowFrame();
+}
+
+static void BluetoothDiagnostic_RunMotorTest(void)
+{
+    diagnostic_motor_test_request = 0U;
+    show_motor_test_result = true;
+    (void)BSP_Motor_Stop(&diagnostic_motor_1);
+    (void)BSP_Motor_Stop(&diagnostic_motor_2);
+
+    if (oled_ready) {
+        OLED_NewFrame();
+        OLED_PrintASCIIString(1U, 4U, "MOTOR TEST", &afont16x8, OLED_COLOR_NORMAL);
+        OLED_PrintASCIIString(1U, 28U, "ONE WHEEL AT A TIME", &afont8x6, OLED_COLOR_NORMAL);
+        OLED_PrintASCIIString(1U, 46U, "AUTO STOP ENABLED", &afont8x6, OLED_COLOR_NORMAL);
+        OLED_ShowFrame();
+    }
+    HAL_Delay(500U);
+
+    if (diagnostic_motor_1_init_status == HAL_OK) {
+        diagnostic_motor_test_results[0] = BluetoothDiagnostic_RunMotorPulse(
+            &diagnostic_motor_1, &htim3, MOTOR_TEST_COMMAND);
+        diagnostic_motor_test_results[1] = BluetoothDiagnostic_RunMotorPulse(
+            &diagnostic_motor_1, &htim3, -MOTOR_TEST_COMMAND);
+    }
+    if (diagnostic_motor_2_init_status == HAL_OK) {
+        diagnostic_motor_test_results[2] = BluetoothDiagnostic_RunMotorPulse(
+            &diagnostic_motor_2, &htim4, MOTOR_TEST_COMMAND);
+        diagnostic_motor_test_results[3] = BluetoothDiagnostic_RunMotorPulse(
+            &diagnostic_motor_2, &htim4, -MOTOR_TEST_COMMAND);
+    }
+
+    (void)BSP_Motor_Stop(&diagnostic_motor_1);
+    (void)BSP_Motor_Stop(&diagnostic_motor_2);
+    if (oled_ready) {
+        BluetoothDiagnostic_DrawMotorTestResult();
+    }
+}
+
+/*
+ * The encoder boards contain about 5.1 kOhm pull-ups on A/B.  Enabling the
+ * MCU's much weaker pull-downs gives us a useful no-multimeter test:
+ * a powered and connected encoder still reads high when its Hall output is
+ * released, while an unpowered/open cable is pulled low by the STM32.
+ */
+static void BluetoothDiagnostic_EnableEncoderInputPullDowns(void)
+{
+    GPIO_InitTypeDef gpio = {0};
+
+    gpio.Mode = GPIO_MODE_INPUT;
+    gpio.Pull = GPIO_PULLDOWN;
+
+    gpio.Pin = E1A_Pin | E1B_Pin;
+    HAL_GPIO_Init(E1A_GPIO_Port, &gpio);
+
+    gpio.Pin = E2A_Pin | E2B_Pin;
+    HAL_GPIO_Init(E2A_GPIO_Port, &gpio);
+}
+
+static uint8_t BluetoothDiagnostic_ReadEncoderGpioState(
+    GPIO_TypeDef *port,
+    uint16_t pin_a,
+    uint16_t pin_b
+)
+{
+    uint8_t state = 0U;
+
+    if (HAL_GPIO_ReadPin(port, pin_a) == GPIO_PIN_SET) {
+        state |= 0x02U;
+    }
+    if (HAL_GPIO_ReadPin(port, pin_b) == GPIO_PIN_SET) {
+        state |= 0x01U;
+    }
+
+    return state;
+}
+
+static void BluetoothDiagnostic_UpdateEncoderGpioTransitions(void)
+{
+    uint8_t encoder_1_state = BluetoothDiagnostic_ReadEncoderGpioState(
+        E1A_GPIO_Port,
+        E1A_Pin,
+        E1B_Pin
+    );
+    uint8_t encoder_2_state = BluetoothDiagnostic_ReadEncoderGpioState(
+        E2A_GPIO_Port,
+        E2A_Pin,
+        E2B_Pin
+    );
+
+    diagnostic_encoder_1_gpio_state = encoder_1_state;
+    diagnostic_encoder_2_gpio_state = encoder_2_state;
+
+    if (encoder_1_state != diagnostic_encoder_1_last_gpio_state) {
+        diagnostic_encoder_1_gpio_transitions++;
+        diagnostic_encoder_1_last_gpio_state = encoder_1_state;
+    }
+    if (encoder_2_state != diagnostic_encoder_2_last_gpio_state) {
+        diagnostic_encoder_2_gpio_transitions++;
+        diagnostic_encoder_2_last_gpio_state = encoder_2_state;
+    }
+}
+
+static void BluetoothDiagnostic_UpdateEncoders(uint32_t now_ms)
+{
+    if ((uint32_t)(now_ms - last_encoder_sample_ms)
+        < ENCODER_SAMPLE_PERIOD_MS) {
+        return;
+    }
+
+    last_encoder_sample_ms = now_ms;
+
+    if (diagnostic_encoder_1_init_status == HAL_OK) {
+        diagnostic_encoder_1_delta =
+            BSP_Encoder_ReadDelta(&diagnostic_encoder_1);
+        diagnostic_encoder_1_total += diagnostic_encoder_1_delta;
+        diagnostic_encoder_1_raw =
+            (uint16_t)__HAL_TIM_GET_COUNTER(&htim3);
+    }
+
+    if (diagnostic_encoder_2_init_status == HAL_OK) {
+        diagnostic_encoder_2_delta =
+            BSP_Encoder_ReadDelta(&diagnostic_encoder_2);
+        diagnostic_encoder_2_total += diagnostic_encoder_2_delta;
+        diagnostic_encoder_2_raw =
+            (uint16_t)__HAL_TIM_GET_COUNTER(&htim4);
+    }
+}
 
 static HAL_StatusTypeDef BluetoothDiagnostic_ReadMpuSample(void)
 {
@@ -185,30 +420,56 @@ static bool BluetoothDiagnostic_InitMpu(void)
 
 static void BluetoothDiagnostic_DrawOledTest(void)
 {
-    char line[22];
+    char line[24];
 
     OLED_NewFrame();
 
-    if (mpu_ready) {
-        (void)snprintf(line, sizeof(line), "MPU6050 OK %02X", mpu_who_am_i);
-        OLED_PrintASCIIString(1U, 0U, line, &afont8x6, OLED_COLOR_NORMAL);
+    (void)snprintf(
+        line,
+        sizeof(line),
+        "P1:%u%u P2:%u%u %s/%s",
+        (diagnostic_encoder_1_gpio_state >> 1U) & 1U,
+        diagnostic_encoder_1_gpio_state & 1U,
+        (diagnostic_encoder_2_gpio_state >> 1U) & 1U,
+        diagnostic_encoder_2_gpio_state & 1U,
+        diagnostic_encoder_1_init_status == HAL_OK ? "OK" : "ER",
+        diagnostic_encoder_2_init_status == HAL_OK ? "OK" : "ER"
+    );
+    OLED_PrintASCIIString(1U, 0U, line, &afont8x6, OLED_COLOR_NORMAL);
 
-        (void)snprintf(line, sizeof(line), "AX%6d GX%6d", mpu_accel_x, mpu_gyro_x);
-        OLED_PrintASCIIString(1U, 10U, line, &afont8x6, OLED_COLOR_NORMAL);
-        (void)snprintf(line, sizeof(line), "AY%6d GY%6d", mpu_accel_y, mpu_gyro_y);
-        OLED_PrintASCIIString(1U, 20U, line, &afont8x6, OLED_COLOR_NORMAL);
-        (void)snprintf(line, sizeof(line), "AZ%6d GZ%6d", mpu_accel_z, mpu_gyro_z);
-        OLED_PrintASCIIString(1U, 30U, line, &afont8x6, OLED_COLOR_NORMAL);
-        OLED_PrintASCIIString(1U, 42U, "TILT AND MOVE BOARD", &afont8x6, OLED_COLOR_NORMAL);
-    } else {
-        OLED_PrintASCIIString(1U, 0U, "MPU6050 FAIL", &afont8x6, OLED_COLOR_NORMAL);
-        OLED_PrintASCIIString(1U, 12U, "CHECK I2C2 PB10/PB11", &afont8x6, OLED_COLOR_NORMAL);
-        (void)snprintf(line, sizeof(line), "WHO_AM_I %02X", mpu_who_am_i);
-        OLED_PrintASCIIString(1U, 24U, line, &afont8x6, OLED_COLOR_NORMAL);
-        OLED_PrintASCIIString(1U, 42U, "SSD1306 DISPLAY OK", &afont8x6, OLED_COLOR_NORMAL);
-    }
+    (void)snprintf(
+        line,
+        sizeof(line),
+        "E1 C%5u X%7lu",
+        diagnostic_encoder_1_raw,
+        (unsigned long)diagnostic_encoder_1_gpio_transitions
+    );
+    OLED_PrintASCIIString(1U, 10U, line, &afont8x6, OLED_COLOR_NORMAL);
+    (void)snprintf(
+        line,
+        sizeof(line),
+        "E1 TOTAL%+10ld",
+        (long)diagnostic_encoder_1_total
+    );
+    OLED_PrintASCIIString(1U, 20U, line, &afont8x6, OLED_COLOR_NORMAL);
 
-    OLED_PrintASCIIString(1U, 54U, "K1 AVG  K2 LIVE", &afont8x6, OLED_COLOR_NORMAL);
+    (void)snprintf(
+        line,
+        sizeof(line),
+        "E2 C%5u X%7lu",
+        diagnostic_encoder_2_raw,
+        (unsigned long)diagnostic_encoder_2_gpio_transitions
+    );
+    OLED_PrintASCIIString(1U, 34U, line, &afont8x6, OLED_COLOR_NORMAL);
+    (void)snprintf(
+        line,
+        sizeof(line),
+        "E2 TOTAL%+10ld",
+        (long)diagnostic_encoder_2_total
+    );
+    OLED_PrintASCIIString(1U, 44U, line, &afont8x6, OLED_COLOR_NORMAL);
+
+    OLED_PrintASCIIString(1U, 56U, "PULLDOWN TEST: TURN", &afont8x6, OLED_COLOR_NORMAL);
     OLED_ShowFrame();
 }
 
@@ -681,6 +942,26 @@ void BluetoothDiagnostic_Init(UART_HandleTypeDef *huart)
     mpu_average_baseline_test_number = 0U;
     mpu_average_baseline_valid = false;
     show_mpu_average_result = false;
+    show_motor_test_result = false;
+    diagnostic_motor_test_request = 0U;
+    memset((void *)diagnostic_motor_test_results, 0,
+           sizeof(diagnostic_motor_test_results));
+    diagnostic_encoder_1_delta = 0;
+    diagnostic_encoder_2_delta = 0;
+    diagnostic_encoder_1_total = 0;
+    diagnostic_encoder_2_total = 0;
+    diagnostic_encoder_1_raw = 0U;
+    diagnostic_encoder_2_raw = 0U;
+    diagnostic_encoder_1_gpio_transitions = 0U;
+    diagnostic_encoder_2_gpio_transitions = 0U;
+    diagnostic_encoder_1_last_gpio_state =
+        BluetoothDiagnostic_ReadEncoderGpioState(
+            E1A_GPIO_Port, E1A_Pin, E1B_Pin);
+    diagnostic_encoder_2_last_gpio_state =
+        BluetoothDiagnostic_ReadEncoderGpioState(
+            E2A_GPIO_Port, E2A_Pin, E2B_Pin);
+    diagnostic_encoder_1_gpio_state = diagnostic_encoder_1_last_gpio_state;
+    diagnostic_encoder_2_gpio_state = diagnostic_encoder_2_last_gpio_state;
     BSP_LED_OFF();
     oled_ready = BluetoothDiagnostic_InitOled();
 
@@ -693,10 +974,47 @@ void BluetoothDiagnostic_Init(UART_HandleTypeDef *huart)
     BSP_Key_Init(&diagnostic_keys[3], KEY_4_GPIO_Port, KEY_4_Pin,
                  GPIO_PIN_RESET, 20U, now_ms);
 
+    diagnostic_encoder_1_init_status =
+        BSP_Encoder_Init(&diagnostic_encoder_1, &htim3, false);
+    diagnostic_encoder_2_init_status =
+        BSP_Encoder_Init(&diagnostic_encoder_2, &htim4, false);
+
+    diagnostic_motor_1_init_status = BSP_Motor_Init(
+        &diagnostic_motor_1,
+        &htim2,
+        TIM_CHANNEL_1,
+        AIN1_GPIO_Port,
+        AIN1_Pin,
+        AIN2_GPIO_Port,
+        AIN2_Pin,
+        false
+    );
+    diagnostic_motor_2_init_status = BSP_Motor_Init(
+        &diagnostic_motor_2,
+        &htim2,
+        TIM_CHANNEL_2,
+        BIN1_GPIO_Port,
+        BIN1_Pin,
+        BIN2_GPIO_Port,
+        BIN2_Pin,
+        false
+    );
+
+    BluetoothDiagnostic_EnableEncoderInputPullDowns();
+    diagnostic_encoder_1_last_gpio_state =
+        BluetoothDiagnostic_ReadEncoderGpioState(
+            E1A_GPIO_Port, E1A_Pin, E1B_Pin);
+    diagnostic_encoder_2_last_gpio_state =
+        BluetoothDiagnostic_ReadEncoderGpioState(
+            E2A_GPIO_Port, E2A_Pin, E2B_Pin);
+    diagnostic_encoder_1_gpio_state = diagnostic_encoder_1_last_gpio_state;
+    diagnostic_encoder_2_gpio_state = diagnostic_encoder_2_last_gpio_state;
+
     mpu_ready = BluetoothDiagnostic_InitMpu();
     now_ms = HAL_GetTick();
     last_mpu_sample_ms = now_ms;
     last_oled_refresh_ms = now_ms;
+    last_encoder_sample_ms = now_ms;
     if (oled_ready) {
         BluetoothDiagnostic_DrawOledTest();
     }
@@ -705,14 +1023,24 @@ void BluetoothDiagnostic_Init(UART_HandleTypeDef *huart)
 void BluetoothDiagnostic_Update(void)
 {
     uint32_t now_ms = HAL_GetTick();
+
+    if (diagnostic_motor_test_request == MOTOR_TEST_MAGIC) {
+        BluetoothDiagnostic_RunMotorTest();
+        return;
+    }
+
+    BluetoothDiagnostic_UpdateEncoderGpioTransitions();
     BluetoothDiagnostic_UpdateKeys(now_ms);
+    BluetoothDiagnostic_UpdateEncoders(now_ms);
 
     if (BluetoothDiagnostic_UpdateMpuAverage(now_ms)) {
         return;
     }
 
     BluetoothDiagnostic_UpdateMpu(now_ms);
-    BluetoothDiagnostic_UpdateOled(now_ms);
+    if (!show_motor_test_result) {
+        BluetoothDiagnostic_UpdateOled(now_ms);
+    }
 
     switch (diagnostic_state) {
         case BLUETOOTH_DIAGNOSTIC_RAW_HAL:

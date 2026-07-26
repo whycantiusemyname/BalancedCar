@@ -26,7 +26,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include "BluetoothDiagnostic.h"
+#include "App.h"
 
 /* USER CODE END Includes */
 
@@ -100,7 +100,8 @@ int main(void)
   MX_I2C2_Init();
   MX_TIM4_Init();
   /* USER CODE BEGIN 2 */
-  BluetoothDiagnostic_Init(&huart2);
+  /* 初始化失败时整车状态机会进入 FAULT，并保持两个电机为零。 */
+  (void)App_Init();
 
   /* USER CODE END 2 */
 
@@ -111,7 +112,7 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-    BluetoothDiagnostic_Update();
+    App_Update();
   }
   /* USER CODE END 3 */
 }

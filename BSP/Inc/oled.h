@@ -18,6 +18,8 @@ void OLED_DisPlay_On();
 void OLED_DisPlay_Off();
 
 void OLED_NewFrame();
+/** 只发送一页（8行）显存，用于把整帧刷新摊到多个主循环周期。 */
+void OLED_ShowPage(uint8_t page);
 void OLED_ShowFrame();
 void OLED_SetPixel(uint8_t x, uint8_t y, OLED_ColorMode color);
 

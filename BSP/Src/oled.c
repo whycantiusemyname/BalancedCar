@@ -152,15 +152,21 @@ void OLED_NewFrame() {
  * @brief 将当前显存显示到屏幕上
  * @note 此函数是移植本驱动时的重要函数 将本驱动库移植到其他驱动芯片时应根据实际情况修改此函数
  */
-void OLED_ShowFrame() {
+void OLED_ShowPage(uint8_t page) {
   static uint8_t sendBuffer[OLED_COLUMN + 1];
+  if (page >= OLED_PAGE) return;
+
   sendBuffer[0] = 0x40;
-  for (uint8_t i = 0; i < OLED_PAGE; i++) {
-    OLED_SendCmd(0xB0 + i); // 设置页地址
-    OLED_SendCmd(0x00);     // SSD1306 列地址低4位（无 CH1116 的两列偏移）
-    OLED_SendCmd(0x10);     // 设置列地址高4位
-    memcpy(sendBuffer + 1, OLED_GRAM[i], OLED_COLUMN);
-    OLED_Send(sendBuffer, OLED_COLUMN + 1);
+  OLED_SendCmd(0xB0 + page); // 设置页地址
+  OLED_SendCmd(0x00);        // SSD1306 列地址低4位（无 CH1116 的两列偏移）
+  OLED_SendCmd(0x10);        // 设置列地址高4位
+  memcpy(sendBuffer + 1, OLED_GRAM[page], OLED_COLUMN);
+  OLED_Send(sendBuffer, OLED_COLUMN + 1);
+}
+
+void OLED_ShowFrame() {
+  for (uint8_t page = 0; page < OLED_PAGE; page++) {
+    OLED_ShowPage(page);
   }
 }
 
