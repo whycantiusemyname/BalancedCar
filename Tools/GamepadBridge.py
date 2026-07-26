@@ -26,7 +26,7 @@ PARAMETERS_TYPE = 2
 HEADER_FORMAT = "<2sBBBBBBHI"
 HEADER_SIZE = struct.calcsize(HEADER_FORMAT)
 SAMPLE_FORMAT = "<17h"
-PARAMETERS_FORMAT = "<21f"
+PARAMETERS_FORMAT = "<22f"
 SAMPLE_NAMES = (
     "pitch_deg",
     "accel_pitch_deg",
@@ -61,6 +61,7 @@ PARAMETER_NAMES = (
     "motor_output_limit", "turn_output_limit", "turn_integral_limit",
     "joystick_speed_limit", "joystick_yaw_rate_limit_dps",
     "command_timeout_ms", "motor_deadzone_band", "position_hold_kp",
+    "turn_feedforward",
 )
 STATE_NAMES = {0: "CALIBRATING", 1: "BALANCING", 2: "FALLEN", 3: "FAULT"}
 

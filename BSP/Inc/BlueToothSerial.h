@@ -68,6 +68,20 @@ HAL_StatusTypeDef BSP_BluetoothSerial_Init(
 );
 
 /**
+ * @brief 尝试把HC-04模块和本侧USART一起切换到目标波特率。
+ * @param huart    已按CubeMX默认波特率初始化、尚未启动DMA的UART句柄。
+ * @param baudrate 目标波特率;与当前值相同则直接返回HAL_OK。
+ *
+ * 必须在 BSP_BluetoothSerial_Init() 之前、蓝牙未被主机连接时调用。
+ * 模块已在目标波特率时,旧波特率发出的AT命令只是被忽略的噪声,因此
+ * 每次上电重复协商是安全的幂等操作。
+ */
+HAL_StatusTypeDef BSP_BluetoothSerial_NegotiateBaud(
+    UART_HandleTypeDef *huart,
+    uint32_t baudrate
+);
+
+/**
  * @brief 处理 UART 空闲、DMA 半满或全满产生的接收事件。
  * @param serial  蓝牙串口对象。
  * @param huart   HAL_UARTEx_RxEventCallback() 传入的 UART 句柄。

@@ -502,11 +502,26 @@ static void App_UpdateBalancing(uint32_t now_ms)
     }
     else
     {
+        /*
+         * 前馈按目标转速直接给差分量:转动摩擦让纯反馈的稳态比卡在
+         * 约0.72,而积分在1~2秒的转向里来不及闭合。前馈不进反馈回路,
+         * 没有稳定性代价;总量仍受转向输出限幅约束。
+         */
         app.turn_output = PID_Update(
             &app.turn_pid,
             app.control_target.yaw_rate_dps,
             app.state_estimate.yaw_rate_dps,
-            dt_seconds);
+            dt_seconds) +
+            app.control_target.turn_feedforward *
+                app.control_target.yaw_rate_dps;
+        if (app.turn_output > BALANCE_CAR_DEFAULT_MAX_TURN_OUTPUT)
+        {
+            app.turn_output = BALANCE_CAR_DEFAULT_MAX_TURN_OUTPUT;
+        }
+        else if (app.turn_output < -BALANCE_CAR_DEFAULT_MAX_TURN_OUTPUT)
+        {
+            app.turn_output = -BALANCE_CAR_DEFAULT_MAX_TURN_OUTPUT;
+        }
         app.turn_output_limited =
             fabsf(app.turn_output) >=
                 BALANCE_CAR_DEFAULT_MAX_TURN_OUTPUT - 0.5F;
@@ -639,6 +654,11 @@ HAL_StatusTypeDef App_Init(void)
     OLED_Init();
 
     /* 蓝牙是可选能力：失败只关闭调参与遥测，不阻止核心控制运行。 */
+#if BALANCE_CAR_BLUETOOTH_UPGRADE_BAUD != 0U
+    /* DMA启动前先把模块与本侧USART协商到高波特率;失败也不影响平衡。 */
+    (void)BSP_BluetoothSerial_NegotiateBaud(
+        &huart2, BALANCE_CAR_BLUETOOTH_UPGRADE_BAUD);
+#endif
     app.bluetooth_available =
         BSP_BluetoothSerial_Init(&app.bluetooth, &huart2) == HAL_OK;
 
@@ -652,6 +672,8 @@ HAL_StatusTypeDef App_Init(void)
         BALANCE_CAR_DEFAULT_MOTOR_DEADZONE_BAND;
     app.control_target.position_hold_kp =
         BALANCE_CAR_DEFAULT_POSITION_HOLD_KP;
+    app.control_target.turn_feedforward =
+        BALANCE_CAR_DEFAULT_TURN_FEEDFORWARD;
     app.longitudinal_control.target_pitch_deg =
         app.control_target.balance_trim_deg;
     app.turn_pid = (PID){
@@ -1048,6 +1070,8 @@ static void App_UpdateDiagnostics(uint32_t now_ms)
                 app.control_target.motor_deadzone_band,
             .position_hold_kp =
                 app.control_target.position_hold_kp,
+            .turn_feedforward =
+                app.control_target.turn_feedforward,
             .speed_integral_limit_deg =
                 BALANCE_CAR_DEFAULT_MAX_SPEED_INTEGRAL_PITCH_DEG,
             .target_pitch_limit_deg =

@@ -51,6 +51,11 @@ CommandAction Command_Apply(const BalanceCar_Command *command,
                 command->data.scalar > 0.0F ? command->data.scalar : 0.0F;
             return COMMAND_ACTION_APPLIED;
 
+        case BALANCE_CAR_COMMAND_SET_TURN_FEEDFORWARD:
+            target->turn_feedforward =
+                command->data.scalar > 0.0F ? command->data.scalar : 0.0F;
+            return COMMAND_ACTION_APPLIED;
+
         case BALANCE_CAR_COMMAND_SET_PID_GAIN:
         {
             PID *const pid_table[] = {

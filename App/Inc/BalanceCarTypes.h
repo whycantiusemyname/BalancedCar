@@ -42,6 +42,7 @@ typedef enum
     BALANCE_CAR_COMMAND_SET_MOTOR_DEADZONE_OFFSET,
     BALANCE_CAR_COMMAND_SET_MOTOR_DEADZONE_BAND,
     BALANCE_CAR_COMMAND_SET_POSITION_HOLD_KP,
+    BALANCE_CAR_COMMAND_SET_TURN_FEEDFORWARD,
     BALANCE_CAR_COMMAND_START,
     BALANCE_CAR_COMMAND_STOP,
     BALANCE_CAR_COMMAND_SET_PID_GAIN,
@@ -100,6 +101,8 @@ typedef struct
     float motor_deadzone_band;
     /** 驻车位置环增益，(counts/s)/count；0表示关闭位置保持。 */
     float position_hold_kp;
+    /** 目标偏航角速度前馈，差分输出每dps；0表示关闭。 */
+    float turn_feedforward;
 } BalanceCar_ControlTarget;
 
 #endif /* BALANCE_CAR_TYPES_H */

@@ -73,6 +73,54 @@ static void BSP_BluetoothSerial_CopyDmaRange(
     }
 }
 
+HAL_StatusTypeDef BSP_BluetoothSerial_NegotiateBaud(
+    UART_HandleTypeDef *huart,
+    uint32_t baudrate
+)
+{
+    if (huart == NULL || baudrate == 0U)
+    {
+        return HAL_ERROR;
+    }
+    if (huart->Init.BaudRate == baudrate)
+    {
+        return HAL_OK;
+    }
+    if (baudrate != 115200U)
+    {
+        /* AT命令串为固定文本;目前只支持切换到115200。 */
+        return HAL_ERROR;
+    }
+
+    /*
+     * 汇承HC-04的AT命令使用完整数值格式;老固件不要求行结束符,新固件
+     * 要求\r\n,两种都发一遍。不使用"AT+BAUD8"这类序号方言:不同厂商
+     * 序号映射不一致(HM-10的8是230400),写错会永久失联。
+     */
+    static const char *const commands[] = {
+        "AT+BAUD=115200",
+        "AT+BAUD=115200\r\n",
+    };
+    for (uint32_t index = 0U;
+         index < sizeof(commands) / sizeof(commands[0]);
+         index++)
+    {
+        (void)HAL_UART_Transmit(huart,
+                                (const uint8_t *)commands[index],
+                                (uint16_t)strlen(commands[index]),
+                                100U);
+        /* 留出模块解析和按旧波特率回复OK的时间。 */
+        HAL_Delay(150U);
+    }
+
+    if (HAL_UART_DeInit(huart) != HAL_OK)
+    {
+        return HAL_ERROR;
+    }
+    huart->Init.BaudRate = baudrate;
+    return HAL_UART_Init(huart);
+}
+
 HAL_StatusTypeDef BSP_BluetoothSerial_Init(
     BSP_BluetoothSerial *serial,
     UART_HandleTypeDef *huart

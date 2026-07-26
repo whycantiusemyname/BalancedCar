@@ -79,6 +79,7 @@ typedef struct
     float command_timeout_ms;
     float motor_deadzone_band;
     float position_hold_kp;
+    float turn_feedforward;
 } BalanceCar_TelemetryParameters;
 
 void BluetoothProtocol_Init(BluetoothProtocol *protocol,

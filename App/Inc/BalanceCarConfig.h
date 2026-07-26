@@ -19,7 +19,18 @@
 #define BALANCE_CAR_OUTER_LOOP_PERIOD_MS         20U
 #define BALANCE_CAR_KEY_TASK_PERIOD_MS           10U
 #define BALANCE_CAR_BLUETOOTH_TASK_PERIOD_MS      5U
+
+/*
+ * 非0时启动阶段尝试用AT命令把HC-04切到该波特率并重配USART2;CubeMX
+ * 侧保持9600作为初次协商语言。模块已在目标波特率时协商是幂等空操作。
+ * 改回0即完全恢复9600行为(遥测周期同步放宽,9600带宽只够60ms)。
+ */
+#define BALANCE_CAR_BLUETOOTH_UPGRADE_BAUD      115200U
+#if BALANCE_CAR_BLUETOOTH_UPGRADE_BAUD != 0U
+#define BALANCE_CAR_TELEMETRY_PERIOD_MS          40U
+#else
 #define BALANCE_CAR_TELEMETRY_PERIOD_MS          60U
+#endif
 /* 每20ms发送OLED的一页，完整8页约160ms刷新一次。 */
 #define BALANCE_CAR_DISPLAY_PAGE_PERIOD_MS       20U
 
@@ -86,6 +97,12 @@
 #define BALANCE_CAR_DEFAULT_SPEED_KD                 0.0F
 /* 7-26:2.6实驾验证;3.5会因GZ噪声×增益产生剧烈差分抖动,严禁大步。 */
 #define BALANCE_CAR_DEFAULT_TURN_KP                  2.6F
+/*
+ * 目标偏航角速度前馈(输出/dps)。持续旋转实测跟踪比卡0.72且积分闭不
+ * 掉,纯反馈提增益又会放大GZ噪声;前馈直接按目标给差分量,无稳定性
+ * 代价。0=关闭,先在线扫出实车值再固化。
+ */
+#define BALANCE_CAR_DEFAULT_TURN_FEEDFORWARD         0.0F
 #define BALANCE_CAR_DEFAULT_TURN_KI                  0.30F
 #define BALANCE_CAR_DEFAULT_TURN_KD                  0.0F
 
@@ -102,8 +119,12 @@
  * 用手扶姿态重定义零点。
  */
 #define BALANCE_CAR_ACCEL_PITCH_MOUNT_OFFSET_DEG   1.5F
-/* 5 ms采样时alpha约为0.999，减弱车辆水平加速度对倾角的污染。 */
-#define BALANCE_CAR_COMPLEMENTARY_TIME_CONSTANT_S    5.0F
+/*
+ * 7-26实测急加减速时加速度角偏差中位数3.7度、p90达12度;把时间常数
+ * 从5s提到8s进一步压低机动期间对姿态估计的污染,代价是零偏收敛更慢
+ * (上电校准已消除主要陀螺零偏,可接受)。
+ */
+#define BALANCE_CAR_COMPLEMENTARY_TIME_CONSTANT_S    8.0F
 #define BALANCE_CAR_CALIBRATION_SAMPLE_COUNT      500U
 
 /* 根据已完成的电机/编码器联动测试建立逻辑方向，实车前进方向仍需复核。 */

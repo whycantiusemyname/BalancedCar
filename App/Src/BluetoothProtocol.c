@@ -32,7 +32,7 @@ static const PIDSlider pid_sliders[] = {
 #define TELEMETRY_PARAMETERS_TYPE      2U
 #define TELEMETRY_HEADER_SIZE          14U
 #define TELEMETRY_SAMPLE_FIELD_COUNT   17U
-#define TELEMETRY_PARAMETER_COUNT      21U
+#define TELEMETRY_PARAMETER_COUNT      22U
 #define TELEMETRY_SAMPLE_FRAME_SIZE \
     (TELEMETRY_HEADER_SIZE + TELEMETRY_SAMPLE_FIELD_COUNT * 2U + 2U)
 #define TELEMETRY_PARAMETER_FRAME_SIZE \
@@ -184,6 +184,10 @@ static bool ParseFrame(char *frame, BalanceCar_Command *command)
         else if (strcmp(name, "PosKp") == 0)
         {
             command->type = BALANCE_CAR_COMMAND_SET_POSITION_HOLD_KP;
+        }
+        else if (strcmp(name, "TurnFF") == 0)
+        {
+            command->type = BALANCE_CAR_COMMAND_SET_TURN_FEEDFORWARD;
         }
         else if (strcmp(name, "BalanceTrim") == 0)
         {
@@ -382,7 +386,9 @@ bool BluetoothProtocol_Poll(BluetoothProtocol *protocol,
                     command->type ==
                         BALANCE_CAR_COMMAND_SET_MOTOR_DEADZONE_BAND ||
                     command->type ==
-                        BALANCE_CAR_COMMAND_SET_POSITION_HOLD_KP)
+                        BALANCE_CAR_COMMAND_SET_POSITION_HOLD_KP ||
+                    command->type ==
+                        BALANCE_CAR_COMMAND_SET_TURN_FEEDFORWARD)
                 {
                     protocol->parameters_pending = true;
                 }
@@ -610,6 +616,7 @@ static HAL_StatusTypeDef SendBinaryParameters(
         /* 新字段追加在末尾，上位机按位置解包时旧字段含义不变。 */
         parameters->motor_deadzone_band,
         parameters->position_hold_kp,
+        parameters->turn_feedforward,
     };
     for (uint32_t index = 0U; index < TELEMETRY_PARAMETER_COUNT; index++)
     {
